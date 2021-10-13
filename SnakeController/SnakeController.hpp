@@ -12,6 +12,14 @@ class IPort;
 
 namespace Snake
 {
+
+struct Segment
+{
+    int x;
+    int y;
+    int ttl;
+};
+
 struct ConfigurationError : std::logic_error
 {
     ConfigurationError();
@@ -33,13 +41,6 @@ public:
     void receive(std::unique_ptr<Event> e) override;
 
 private:
-    struct Segment
-    {
-        int x;
-        int y;
-        int ttl;
-    };
-
     IPort& m_displayPort;
     IPort& m_foodPort;
     IPort& m_scorePort;
@@ -49,6 +50,14 @@ private:
 
     Direction m_currentDirection;
     std::list<Segment> m_segments;
+    bool checkBiteSelf(std::list<Segment>& segments, const Segment& newHead);
+    bool checkHitWall(const Segment& head, const std::pair<int, int>& mapDimension) const;
+    bool checkGetFood(const Segment& head, const std::pair<int, int>& foodPosition);
+    void shiftSnake(std::list<Segment>& segments, IPort& displayPort);
+    Segment getNewHead(const Segment& head);
+    void displayNewHead(const Segment& head, IPort& displayPort);
+    void removeOldElements(std::list<Segment>& segments);
+    void displayFood(const std::pair<int, int>& foodPosition, IPort& displayPort, Cell cell);
 };
 
 } // namespace Snake

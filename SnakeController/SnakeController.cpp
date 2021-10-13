@@ -63,72 +63,107 @@ Controller::Controller(IPort& p_displayPort, IPort& p_foodPort, IPort& p_scorePo
     }
 }
 
+bool Controller::checkBiteSelf(std::list<Segment> &segments, const Segment& head) {
+    for (auto segment : segments) {
+        if (segment.x == head.x and segment.y == head.y) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool Controller::checkHitWall(const Segment& head, const std::pair<int, int>& mapDimension) const{
+    if(head.x < 0 or head.y < 0){
+        return true;
+    }
+    if(head.x >= mapDimension.first or head.y >= mapDimension.second){
+        return true;
+    }
+
+    return false;
+}
+
+void Controller::shiftSnake(std::list<Segment>& segments, IPort& displayPort){
+    for (auto &segment : segments) {
+        if (not --segment.ttl) {
+            DisplayInd l_evt{segment.x, segment.y, Cell_FREE};
+            displayPort.send(std::make_unique<EventT<DisplayInd>>(l_evt));
+        }
+    }
+}
+
+bool Controller::checkGetFood(const Segment& head, const std::pair<int, int>& foodPosition){
+    return std::make_pair(head.x, head.y) == foodPosition;
+}
+
+Segment Controller::getNewHead(const Segment& head) {
+    auto dirLeft{m_currentDirection & Direction_LEFT};
+    auto dirDown{m_currentDirection & Direction_DOWN};
+
+    return {
+        head.x + (dirLeft ? dirDown ? 1 : -1 : 0),
+        head.y + (not dirLeft ? dirDown ? 1 : -1 : 0),
+        head.ttl
+    };
+}
+
+void Controller::displayNewHead(const Segment& head, IPort& displayPort){
+    DisplayInd placeNewHead{ head.x, head.y, Cell_SNAKE };
+    displayPort.send(std::make_unique<EventT<DisplayInd>>(placeNewHead));
+}
+
+void Controller::removeOldElements(std::list<Segment>& segments){
+    segments.erase(
+            std::remove_if(
+                    segments.begin(),
+                    segments.end(),
+                    [](auto const& segment){ return segment.ttl <= 0; }),
+            segments.end());
+}
+
+void Controller::displayFood(const std::pair<int, int>& foodPosition, IPort& displayPort, Cell cell){
+    DisplayInd clearOldFood{
+        m_foodPosition.first,
+        m_foodPosition.second,
+        cell
+    };
+
+    displayPort.send(std::make_unique<EventT<DisplayInd>>(clearOldFood));
+}
+
 void Controller::receive(std::unique_ptr<Event> e)
 {
     try {
         auto const& timerEvent = *dynamic_cast<EventT<TimeoutInd> const&>(*e);
 
-        Segment const& currentHead = m_segments.front();
+        Segment newHead = getNewHead(m_segments.front());
 
-        Segment newHead;
-        newHead.x = currentHead.x + ((m_currentDirection & 0b01) ? (m_currentDirection & 0b10) ? 1 : -1 : 0);
-        newHead.y = currentHead.y + (not (m_currentDirection & 0b01) ? (m_currentDirection & 0b10) ? 1 : -1 : 0);
-        newHead.ttl = currentHead.ttl;
+        bool lost = checkBiteSelf(m_segments, newHead)
+                || checkHitWall(newHead, m_mapDimension);
 
-        bool lost = false;
-
-        for (auto segment : m_segments) {
-            if (segment.x == newHead.x and segment.y == newHead.y) {
-                m_scorePort.send(std::make_unique<EventT<LooseInd>>());
-                lost = true;
-                break;
-            }
+        if(lost){
+            m_scorePort.send(std::make_unique<EventT<LooseInd>>());
+            return;
         }
 
-        if (not lost) {
-            if (std::make_pair(newHead.x, newHead.y) == m_foodPosition) {
-                m_scorePort.send(std::make_unique<EventT<ScoreInd>>());
-                m_foodPort.send(std::make_unique<EventT<FoodReq>>());
-            } else if (newHead.x < 0 or newHead.y < 0 or
-                       newHead.x >= m_mapDimension.first or
-                       newHead.y >= m_mapDimension.second) {
-                m_scorePort.send(std::make_unique<EventT<LooseInd>>());
-                lost = true;
-            } else {
-                for (auto &segment : m_segments) {
-                    if (not --segment.ttl) {
-                        DisplayInd l_evt;
-                        l_evt.x = segment.x;
-                        l_evt.y = segment.y;
-                        l_evt.value = Cell_FREE;
-
-                        m_displayPort.send(std::make_unique<EventT<DisplayInd>>(l_evt));
-                    }
-                }
-            }
+        if (checkGetFood(newHead, m_foodPosition)) {
+            m_scorePort.send(std::make_unique<EventT<ScoreInd>>());
+            m_foodPort.send(std::make_unique<EventT<FoodReq>>());
+        }
+        else {
+            shiftSnake(m_segments, m_displayPort);
         }
 
-        if (not lost) {
-            m_segments.push_front(newHead);
-            DisplayInd placeNewHead;
-            placeNewHead.x = newHead.x;
-            placeNewHead.y = newHead.y;
-            placeNewHead.value = Cell_SNAKE;
+        m_segments.push_front(newHead);
+        displayNewHead(newHead, m_displayPort);
+        removeOldElements(m_segments);
 
-            m_displayPort.send(std::make_unique<EventT<DisplayInd>>(placeNewHead));
-
-            m_segments.erase(
-                std::remove_if(
-                    m_segments.begin(),
-                    m_segments.end(),
-                    [](auto const& segment){ return not (segment.ttl > 0); }),
-                m_segments.end());
-        }
     } catch (std::bad_cast&) {
         try {
             auto direction = dynamic_cast<EventT<DirectionInd> const&>(*e)->direction;
 
-            if ((m_currentDirection & 0b01) != (direction & 0b01)) {
+            if ((m_currentDirection & Direction_LEFT) != (direction & Direction_LEFT)) {
                 m_currentDirection = direction;
             }
         } catch (std::bad_cast&) {
@@ -146,11 +181,8 @@ void Controller::receive(std::unique_ptr<Event> e)
                 if (requestedFoodCollidedWithSnake) {
                     m_foodPort.send(std::make_unique<EventT<FoodReq>>());
                 } else {
-                    DisplayInd clearOldFood;
-                    clearOldFood.x = m_foodPosition.first;
-                    clearOldFood.y = m_foodPosition.second;
-                    clearOldFood.value = Cell_FREE;
-                    m_displayPort.send(std::make_unique<EventT<DisplayInd>>(clearOldFood));
+                    displayFood(m_foodPosition, m_displayPort, Cell_FREE);
+                    //displayFood({receivedFood.x, receivedFood.y}, m_displayPort, Cell_FOOD);
 
                     DisplayInd placeNewFood;
                     placeNewFood.x = receivedFood.x;
