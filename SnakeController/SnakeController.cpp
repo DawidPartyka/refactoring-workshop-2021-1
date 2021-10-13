@@ -184,10 +184,11 @@ void Controller::receive(std::unique_ptr<Event> e)
                     displayFood(m_foodPosition, m_displayPort, Cell_FREE);
                     //displayFood({receivedFood.x, receivedFood.y}, m_displayPort, Cell_FOOD);
 
-                    DisplayInd placeNewFood;
-                    placeNewFood.x = receivedFood.x;
-                    placeNewFood.y = receivedFood.y;
-                    placeNewFood.value = Cell_FOOD;
+                    DisplayInd placeNewFood{
+                        receivedFood.x,
+                        receivedFood.y,
+                        Cell_FOOD
+                    };
                     m_displayPort.send(std::make_unique<EventT<DisplayInd>>(placeNewFood));
                 }
 
@@ -208,10 +209,12 @@ void Controller::receive(std::unique_ptr<Event> e)
                     if (requestedFoodCollidedWithSnake) {
                         m_foodPort.send(std::make_unique<EventT<FoodReq>>());
                     } else {
-                        DisplayInd placeNewFood;
-                        placeNewFood.x = requestedFood.x;
-                        placeNewFood.y = requestedFood.y;
-                        placeNewFood.value = Cell_FOOD;
+                        DisplayInd placeNewFood{
+                            requestedFood.x,
+                            requestedFood.y,
+                            Cell_FOOD
+                        };
+
                         m_displayPort.send(std::make_unique<EventT<DisplayInd>>(placeNewFood));
                     }
 
